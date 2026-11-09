@@ -1,0 +1,55 @@
+name: Release
+
+# Every push to main (a merged PR) releases if the commits since the last v*
+# tag warrant it (see cliff.toml). The tag is created by the release itself.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+# Two merges must not race for the same version; the later run waits and then
+# sees the tag of the earlier one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Next version
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - id: next
+        run: |
+          version=$(mise run -q release:next)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ -z "$version" ]; then
+            echo "Nothing releasable since the last tag." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Releasing v$version." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  release:
+    name: Release
+    needs: version
+    if: needs.version.outputs.version != ''
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      prerelease: false
+      sha: ${{ github.sha }}

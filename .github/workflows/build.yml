@@ -1,0 +1,81 @@
+name: Build and publish
+
+# Builds the image and publishes the GitHub release for an already decided
+# version. Called by release.yml (full release) and prerelease.yml.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version without the leading v
+        type: string
+        required: true
+      prerelease:
+        description: Mark as pre-release and leave the latest image tag alone
+        type: boolean
+        required: true
+      sha:
+        description: Commit to build and tag
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      VERSION: ${{ inputs.version }}
+      SHA: ${{ inputs.sha }}
+      PRERELEASE: ${{ inputs.prerelease }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/technitium-operator
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.sha }}
+          # git-cliff needs the history and the tags for the release notes
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          # this job publishes artifacts, so no cache another run could poison
+          cache: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ inputs.version }}
+            ${{ !inputs.prerelease && format('{0}:latest', env.IMAGE) || '' }}
+      - name: Build install.yaml
+        run: IMG="$IMAGE:$VERSION" mise run build-installer
+      - name: Release notes
+        run: mise run release:notes -- "$VERSION" > "$RUNNER_TEMP/notes.md"
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = true ]; then
+            flags+=(--prerelease)
+          else
+            flags+=(--latest)
+          fi
+          # the API creates the tag v$VERSION at $SHA
+          gh release create "v$VERSION" dist/install.yaml \
+            --title "v$VERSION" \
+            --target "$SHA" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "${flags[@]}"

@@ -1,0 +1,13 @@
+# Used by `mise run commits:check` only. Kept apart from cliff.toml because a
+# skipping commit parser there would hide unconventional commits from
+# require_conventional.
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+require_conventional = true
+# a conventional commit whose type is not listed below fails too (e.g. "wip:")
+fail_on_unmatched_commit = true
+commit_parsers = [
+  { message = "^(feat|fix|perf|docs|test|chore|ci|build|refactor|style|revert)(\\(.+\\))?!?:", group = "ok" },
+]

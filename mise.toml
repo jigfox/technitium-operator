@@ -1,0 +1,200 @@
+[tools]
+go = "1.26.1"
+"aqua:golangci/golangci-lint" = "2.12.2"
+"aqua:kubernetes-sigs/kubebuilder" = "4.16.0"
+"aqua:orhun/git-cliff" = "2.14.2"
+"aqua:rhysd/actionlint" = "1.7.12"
+"aqua:zizmorcore/zizmor" = "1.32.0"
+"aqua:koalaman/shellcheck" = "0.11.0"
+"aqua:evilmartians/lefthook" = "2.2.2"
+"go:sigs.k8s.io/controller-tools/cmd/controller-gen" = "0.22.0"
+"go:sigs.k8s.io/kustomize/kustomize/v5" = "5.8.1"
+"go:sigs.k8s.io/controller-runtime/tools/setup-envtest" = "0.25.0"
+
+[env]
+_.path = ["{{config_root}}/bin"]
+
+# Common tasks. Targets that `kubebuilder create api` would add to a Makefile
+# have to be mirrored here as tasks.
+
+[tasks.manifests]
+description = "Generate CRDs and ClusterRole"
+run = 'controller-gen rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases'
+
+[tasks.generate]
+description = "Generate DeepCopy methods"
+run = 'controller-gen object paths="./..."'
+
+[tasks.fmt]
+description = "go fmt"
+run = "go fmt ./..."
+
+[tasks.vet]
+description = "go vet"
+run = "go vet ./..."
+
+[tasks.test]
+description = "Unit tests and envtest"
+depends = ["manifests", "generate", "fmt", "vet"]
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+# envtest Kubernetes minor = k8s.io/api minor from go.mod
+k8s=$(go list -m k8s.io/api | awk '{print $2}' | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
+export KUBEBUILDER_ASSETS=$(setup-envtest use "$k8s" --bin-dir "$PWD/bin" -p path)
+go test ./... -coverprofile cover.out
+'''
+
+[tasks.test-integration]
+description = "Integration tests against a real Technitium container (needs Docker)"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+# the controller package's envtest suite runs here too, so it needs the same
+# assets as `test`
+k8s=$(go list -m k8s.io/api | awk '{print $2}' | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
+export KUBEBUILDER_ASSETS=$(setup-envtest use "$k8s" --bin-dir "$PWD/bin" -p path)
+go test -tags integration -count=1 ./internal/...
+'''
+
+[tasks."lint:build"]
+description = "Build golangci-lint with the logcheck plugin (.custom-gcl.yml)"
+sources = [".custom-gcl.yml"]
+outputs = ["bin/golangci-lint-custom"]
+run = "golangci-lint custom --destination bin --name golangci-lint-custom"
+
+[tasks.lint]
+description = "golangci-lint (with plugins)"
+depends = ["lint:build"]
+run = ["golangci-lint-custom config verify", "golangci-lint-custom run"]
+
+[tasks."lint:fix"]
+description = "golangci-lint --fix"
+depends = ["lint:build"]
+run = "golangci-lint-custom run --fix"
+
+[tasks.build]
+description = "Build bin/manager"
+depends = ["manifests", "generate", "fmt", "vet"]
+run = "go build -o bin/manager cmd/main.go"
+
+[tasks.run]
+description = "Run the controller from the host"
+depends = ["manifests", "generate", "fmt", "vet"]
+run = "go run ./cmd/main.go"
+
+[tasks."docker:build"]
+description = "Build the image (IMG, BASE_IMAGE env)"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+docker build ${BASE_IMAGE:+--build-arg BASE_IMAGE=$BASE_IMAGE} -t "${IMG:-controller:latest}" .
+'''
+
+[tasks."docker:buildx"]
+description = "Build and push a multi-arch image (IMG, PLATFORMS env)"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+docker buildx build --push --platform "${PLATFORMS:-linux/amd64,linux/arm64}" \
+  ${BASE_IMAGE:+--build-arg BASE_IMAGE=$BASE_IMAGE} -t "${IMG:?set IMG}" .
+'''
+
+[tasks.build-installer]
+description = "dist/install.yaml for IMG"
+depends = ["manifests", "generate"]
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p dist
+cp config/manager/kustomization.yaml /tmp/technitium-operator-kustomization.bak
+trap 'cp /tmp/technitium-operator-kustomization.bak config/manager/kustomization.yaml' EXIT
+(cd config/manager && kustomize edit set image controller="${IMG:?set IMG}")
+kustomize build config/default > dist/install.yaml
+'''
+
+[tasks.install]
+description = "Install the CRDs into the current cluster"
+depends = ["manifests"]
+run = "kustomize build config/crd | kubectl apply -f -"
+
+[tasks.uninstall]
+description = "Remove the CRDs from the current cluster"
+run = "kustomize build config/crd | kubectl delete --ignore-not-found -f -"
+
+[tasks.deploy]
+description = "Deploy the operator (IMG) to the current cluster"
+depends = ["manifests"]
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+cp config/manager/kustomization.yaml /tmp/technitium-operator-kustomization.bak
+trap 'cp /tmp/technitium-operator-kustomization.bak config/manager/kustomization.yaml' EXIT
+(cd config/manager && kustomize edit set image controller="${IMG:?set IMG}")
+kustomize build config/default | kubectl apply -f -
+'''
+
+[tasks.undeploy]
+description = "Remove the operator from the current cluster"
+run = "kustomize build config/default | kubectl delete --ignore-not-found -f -"
+
+# Releases: git-cliff reads the Conventional Commits since the last stable v*
+# tag (cliff.toml). The release workflows use the same tasks.
+
+[tasks."release:next"]
+description = "Next release version without the v (empty if nothing is releasable); --or-patch falls back to the next patch"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+latest=$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -Ev -- '-' | head -n1 || true)
+next=$(git-cliff --bumped-version 2>/dev/null || true)
+if [ -z "$next" ] || [ "$next" = "$latest" ]; then
+  next=
+  if [ "${1:-}" = "--or-patch" ]; then
+    v=${latest#v}
+    next="v${v%.*}.$(( ${v##*.} + 1 ))"
+  fi
+fi
+echo "${next#v}"
+'''
+
+[tasks."release:notes"]
+description = "Release notes for the unreleased commits as version <version> (e.g. 0.3.0)"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+git-cliff --unreleased --tag "v${1:?usage: release:notes <version>}" --strip header 2>/dev/null
+'''
+
+[tasks."commits:check"]
+description = "Fail if a commit in origin/<base>..HEAD is not a Conventional Commit (base defaults to main)"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+git-cliff --config cliff-check.toml --output /dev/null "origin/${1:-main}..HEAD"
+echo "all commits are conventional"
+'''
+
+[tasks."commits:check-msg"]
+description = "Fail if the commit message in <file> is not a Conventional Commit (lefthook commit-msg)"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+# git-cliff only reads commits, so check the message as a throwaway commit
+# object on top of HEAD (never referenced, garbage-collected by git)
+msg=$(git stripspace --strip-comments < "${1:?usage: commits:check-msg <file>}")
+parent=$(git rev-parse -q --verify HEAD || true)
+commit=$(git commit-tree "$(git write-tree)" ${parent:+-p "$parent"} -m "$msg")
+if ! git-cliff --config cliff-check.toml --output /dev/null "${parent:+$parent..}$commit" 2>/dev/null; then
+  echo "not a Conventional Commit with an allowed type (see cliff-check.toml): $(head -n1 <<<"$msg")" >&2
+  exit 1
+fi
+'''
+
+[tasks."lint:workflows"]
+description = "actionlint and zizmor on .github/workflows"
+run = ["actionlint", "zizmor --no-progress --min-severity medium .github"]
+
+[hooks]
+# git hooks (lefthook.yml) are installed with the tools
+postinstall = "lefthook install"

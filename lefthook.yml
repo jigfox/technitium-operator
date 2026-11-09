@@ -1,0 +1,10 @@
+# Installed by `mise install` (postinstall hook) or `lefthook install`.
+# The same checks run in CI ("Conventional commits").
+commit-msg:
+  jobs:
+    - name: conventional commit
+      run: mise run -q commits:check-msg {1}
+pre-push:
+  jobs:
+    - name: conventional commits
+      run: mise run -q commits:check

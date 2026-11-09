@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["gomod", "github-actions", "dockerfile", "mise"],
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "packageRules": [
+    {
+      "description": "Go modules and the base image end up in the shipped binary and image: they release (fix = patch)",
+      "matchManagers": ["gomod", "dockerfile"],
+      "semanticCommitType": "fix",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "CI and tooling never release (chore = no release)",
+      "matchManagers": ["github-actions", "mise"],
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps"
+    }
+  ]
+}
