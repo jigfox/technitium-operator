@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -20,6 +21,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	techv1alpha1 "github.com/jigfox/technitium-operator/api/v1alpha1"
+	"github.com/jigfox/technitium-operator/internal/controller"
+	"github.com/jigfox/technitium-operator/internal/technitium"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -45,6 +48,8 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var dryRun bool
+	var syncPeriod time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -68,6 +73,10 @@ func main() {
 	opts := zap.Options{
 		Development: true,
 	}
+	flag.BoolVar(&dryRun, "dry-run", false,
+		"Compute, log and emit Events for every change, but send no mutation to Technitium.")
+	flag.DurationVar(&syncPeriod, "sync-period", controller.DefaultInterval,
+		"How often each resource is re-checked to correct drift made in Technitium.")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -165,6 +174,41 @@ func main() {
 		os.Exit(1)
 	}
 
+	if dryRun {
+		setupLog.Info("Running in dry-run mode: no changes are sent to Technitium")
+	}
+	provider := &controller.SecretClientProvider{Reader: mgr.GetAPIReader()}
+	if err := mgr.Add(provider); err != nil {
+		setupLog.Error(err, "Failed to register the Technitium client provider")
+		os.Exit(1)
+	}
+	recorder := mgr.GetEventRecorder("technitium-operator")
+	if err := (&controller.ServerReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Provider: provider,
+		Recorder: recorder,
+		DryRun:   dryRun,
+		Interval: syncPeriod,
+		Cache:    mgr.GetCache(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "technitiumserver")
+		os.Exit(1)
+	}
+	for _, list := range []technitium.List{technitium.Allowed, technitium.Blocked} {
+		if err := (&controller.DomainReconciler{
+			Client:   mgr.GetClient(),
+			Scheme:   mgr.GetScheme(),
+			Provider: provider,
+			Recorder: recorder,
+			DryRun:   dryRun,
+			Interval: syncPeriod,
+			List:     list,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", string(list)+"domain")
+			os.Exit(1)
+		}
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

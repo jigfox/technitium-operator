@@ -1,0 +1,56 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - technitium.jigfox.github.io
+  resources:
+  - technitiumalloweddomains
+  - technitiumblockeddomains
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - technitium.jigfox.github.io
+  resources:
+  - technitiumalloweddomains/finalizers
+  - technitiumblockeddomains/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - technitium.jigfox.github.io
+  resources:
+  - technitiumalloweddomains/status
+  - technitiumblockeddomains/status
+  - technitiumservers/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - technitium.jigfox.github.io
+  resources:
+  - technitiumservers
+  verbs:
+  - get
+  - list
+  - watch
