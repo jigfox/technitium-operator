@@ -1,0 +1,21 @@
+apiVersion: technitium.jigfox.github.io/v1alpha1
+kind: TechnitiumServer
+metadata:
+  name: primary
+spec:
+  url: http://technitium-0.dns.svc:5380
+  credentialsSecretRef:
+    name: technitium-credentials   # see credentials-secret.yaml.example
+    username: admin
+    passwordKey: ADMIN_PASSWORD
+  pruneUnmanaged:
+    allowedDomains: false
+    blockedDomains: false
+  settings:
+    blockListUrls:
+      - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+  apps:
+    - name: Query Logs (Sqlite)
+      config:
+        enableLogging: true
+        maxLogDays: 14

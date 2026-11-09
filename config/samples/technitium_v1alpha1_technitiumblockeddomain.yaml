@@ -1,0 +1,10 @@
+apiVersion: technitium.jigfox.github.io/v1alpha1
+kind: TechnitiumBlockedDomain
+metadata:
+  name: example-blocked
+spec:
+  serverRef:
+    name: primary
+  domain: tracker.example.org
+  reason: telemetry
+  deletionPolicy: Delete

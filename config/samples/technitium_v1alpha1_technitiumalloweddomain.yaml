@@ -1,0 +1,10 @@
+apiVersion: technitium.jigfox.github.io/v1alpha1
+kind: TechnitiumAllowedDomain
+metadata:
+  name: example-allowed
+spec:
+  serverRef:
+    name: primary
+  domain: example.com
+  reason: needed by an app that a block list breaks
+  deletionPolicy: Delete

@@ -1,0 +1,6 @@
+## Append samples of your project ##
+resources:
+- technitium_v1alpha1_technitiumserver.yaml
+- technitium_v1alpha1_technitiumalloweddomain.yaml
+- technitium_v1alpha1_technitiumblockeddomain.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

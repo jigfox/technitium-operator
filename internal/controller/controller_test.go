@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"os"
+	"path/filepath"
+
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -9,8 +12,10 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	techv1alpha1 "github.com/jigfox/technitium-operator/api/v1alpha1"
 	"github.com/jigfox/technitium-operator/internal/technitium"
@@ -191,5 +196,22 @@ var _ = Describe("TechnitiumBlockedDomain", func() {
 			return k8sClient.Get(ctx, key("envtest-keep"), &techv1alpha1.TechnitiumBlockedDomain{}) != nil
 		}, timeout, interval).Should(BeTrue())
 		Expect(fakeTech.Domains(technitium.Blocked)).To(ContainElement("keep.example.org"))
+	})
+})
+
+var _ = Describe("the samples", func() {
+	It("are valid resources", func() {
+		files, err := filepath.Glob(filepath.Join("..", "..", "config", "samples", "technitium_v1alpha1_*.yaml"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(files).To(HaveLen(3))
+		for _, f := range files {
+			data, err := os.ReadFile(f)
+			Expect(err).NotTo(HaveOccurred())
+			obj := &unstructured.Unstructured{}
+			Expect(yaml.Unmarshal(data, &obj.Object)).To(Succeed(), f)
+			obj.SetNamespace("default")
+			obj.SetName(obj.GetName() + "-sample") // "primary" exists already
+			Expect(k8sClient.Create(ctx, obj, client.DryRunAll)).To(Succeed(), f)
+		}
 	})
 })
